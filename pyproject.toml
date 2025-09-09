@@ -1,7 +1,7 @@
 [project]
 name = "uvbrew"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.1"
+description = "create homebrew formulae from a uv package"
 readme = "README.md"
 authors = [
     { name = "thewisenerd", email = "thewisenerd@protonmail.com" }
@@ -11,6 +11,9 @@ dependencies = [
     "click>=8.2.1",
     "structlog>=25.4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/thewisenerd/uvbrew"
 
 [project.scripts]
 uvbrew = "uvbrew:main"
