@@ -1,16 +1,16 @@
 import hashlib
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
 
 import click
+import httpx
 import tomllib
 import structlog
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
-
-indent = 2 * " "
 
 @dataclass
 class Meta:
@@ -28,7 +28,21 @@ class Package:
     url: str
     sha256: str | None
 
-def _packages(root: Path) -> Generator[Package, None, None]:
+# from https://github.com/tdsmith/homebrew-pypi-poet/blob/fdafc615bcd28f29bcbe90789f07cc26f97c3bbc/poet/util.py#L1
+def dash_to_studly(s):
+    l = list(s)
+    l[0] = l[0].upper()
+    delims = "-_"
+    for i, c in enumerate(l):
+        if c in delims:
+            if (i+1) < len(l):
+                l[i+1] = l[i+1].upper()
+    out = "".join(l)
+    for d in delims:
+        out = out.replace(d, "")
+    return out
+
+def _packages(root: Path, skip_packages: set[str]) -> Generator[Package, None, None]:
     output = subprocess.check_output([
         "uv",
         "export",
@@ -39,6 +53,9 @@ def _packages(root: Path) -> Generator[Package, None, None]:
     packages = tomllib.loads(output.decode())['packages']
     for package in packages:
         name = package['name']
+        if name in skip_packages:
+            return
+
         if not 'sdist' in package:
             logger.warning("sdist not found, skipping package", package=name)
             continue
@@ -79,9 +96,72 @@ def _meta(root: Path) -> Meta:
 
     return Meta(name=name, version=version, requires_python=requires_python.removeprefix(">="), description=description, homepage=homepage)
 
+def _from_index(index_url: str, package: str, version: str) -> tuple[str, str] | None:
+    log = logger.bind(package=package, version=version, index_url=index_url)
+    r = httpx.get(f'{index_url}/{package}/json')
+    if r.status_code == 404:
+        log.warning(f"package not found")
+        return None
+    if r.status_code != 200:
+        log.error("failed to fetch package metadata", status_code=r.status_code, response=r.text)
+        return None
+
+    log.debug("package metadata fetched")
+
+    data = r.json()
+    releases = data.get("releases", {})
+
+    if version not in releases:
+        log.warning("version not found")
+        return None
+
+    for idx, file in enumerate(releases[version]):
+        url: str = file.get("url", "")
+        if not url:
+            log.debug("ignoring release with no url", index=idx)
+        assert type(url) == str, f"url is not a string: {type(url)}"
+
+        packagetype: str = file.get("packagetype", "")
+        if packagetype != "":
+            if packagetype != "sdist":
+                log.debug("ignoring non-sdist release", index=idx, packagetype=packagetype)
+                continue
+        else:
+            if url.endswith(".tar.gz"):
+                log.debug("assuming sdist from url", index=idx, url=url)
+            else:
+                log.debug("ignoring non-sdist release", index=idx, url=url)
+                continue
+
+        sha256: str = file.get("digests", {}).get("sha256", None)
+        if sha256 is None:
+            log.debug("calculating sha256", index=idx, url=url)
+            r = httpx.get(url)
+            r.raise_for_status()
+            sha256 = hashlib.sha256(r.content).hexdigest()
+            log.debug("calculated sha256", sha256=sha256)
+
+        return url, sha256
+
+    logger.debug("package not found")
+    return None
+
 @click.command()
-def cli():
+@click.option(
+    '--indent-length', '-i', default=2, type=int, help='number of spaces to indent'
+)
+@click.option(
+    '--index-url', '-I', default="https://pypi.org/pypi", type=str, help='custom package index url. must support the \'/json\' endpoint.'
+)
+@click.option(
+    '-v', '--verbose', is_flag=True, help='enable verbose logging'
+)
+def cli(indent_length: int, index_url: str, verbose: bool):
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+
     root = Path()
+    indent = " " * indent_length
 
     lock_path = root / "uv.lock"
     if not lock_path.exists():
@@ -89,7 +169,7 @@ def cli():
         raise click.Abort()
 
     meta = _meta(root)
-    class_name = meta.name.capitalize()
+    class_name = dash_to_studly(meta.name)
     print(f"class {class_name} < Formula")
     print(indent + f'  include Language::Python::Virtualenv')
     print()
@@ -100,24 +180,29 @@ def cli():
         print(indent + f"homepage \"{meta.homepage}\"")
 
     dist = root / "dist" / f"{meta.name}-{meta.version}.tar.gz"
-    if not dist.exists():
-        logger.info("building dist", root=root)
-        subprocess.check_output(["uv", "build"], cwd=root)
+
+    url, sha256 = _from_index(index_url, meta.name, meta.version) or (None, None)
+    if not url:
         if not dist.exists():
-            raise FileNotFoundError(f"dist file not found after build: {dist}")
+            logger.info("building dist", root=root)
+            subprocess.check_output(["uv", "build"], cwd=root)
+            if not dist.exists():
+                raise FileNotFoundError(f"dist file not found after build: {dist}")
 
-    sha256 = hashlib.sha256()
-    with open(dist, "rb") as f:
-        sha256.update(f.read())
+        url = f"file://{dist.resolve()}"
+        digest = hashlib.sha256()
+        with open(dist, "rb") as f:
+            digest.update(f.read())
+        sha256 = digest.hexdigest()
 
-    print(indent + f"url \"file://{dist.resolve()}\"")
-    print(indent + f"sha256 \"{sha256.hexdigest()}\"")
+    print(indent + f"url \"{url}\"")
+    print(indent + f"sha256 \"{sha256}\"")
     print()
 
     print(indent + f"depends_on \"python@{meta.requires_python}\"")
     print()
 
-    for pkg in _packages(root):
+    for pkg in _packages(root, {meta.name}):
         print(indent + f"resource \"{pkg.name}\" do")
         print(indent*2 + f"url \"{pkg.url}\"")
         if pkg.sha256:
