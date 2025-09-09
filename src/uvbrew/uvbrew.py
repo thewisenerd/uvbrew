@@ -171,7 +171,7 @@ def cli(indent_length: int, index_url: str, verbose: bool):
     meta = _meta(root)
     class_name = dash_to_studly(meta.name)
     print(f"class {class_name} < Formula")
-    print(indent + f'  include Language::Python::Virtualenv')
+    print(indent + f'include Language::Python::Virtualenv')
     print()
 
     if meta.description:
