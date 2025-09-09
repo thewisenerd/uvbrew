@@ -11,6 +11,8 @@ import tomllib
 import structlog
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+mlog = logging.getLogger("uvbrew")
+mlog.setLevel(logging.INFO)
 
 @dataclass
 class Meta:
@@ -96,12 +98,29 @@ def _meta(root: Path) -> Meta:
 
     return Meta(name=name, version=version, requires_python=requires_python.removeprefix(">="), description=description, homepage=homepage)
 
-def _from_index(index_url: str, package: str, version: str) -> tuple[str, str] | None:
+def _from_index(index_url: str | None, package: str, version: str) -> tuple[str, str] | None:
+    default_index = False
+    if index_url is None:
+        default_index = True
+        index_url = "https://pypi.org/pypi"
+
     log = logger.bind(package=package, version=version, index_url=index_url)
     r = httpx.get(f'{index_url}/{package}/json')
     if r.status_code == 404:
         log.warning(f"package not found")
+
+        if not default_index:
+            r = httpx.get(f'{index_url}/{package}-{version}.tar.gz')
+            if r.status_code == 200:
+                sha256 = hashlib.sha256(r.content).hexdigest()
+                log.info("found package archive directly", sha256=sha256)
+                return str(r.url), sha256
+            else:
+                log.warning("package archive not found directly", status_code=r.status_code)
+
         return None
+
+
     if r.status_code != 200:
         log.error("failed to fetch package metadata", status_code=r.status_code, response=r.text)
         return None
@@ -151,12 +170,12 @@ def _from_index(index_url: str, package: str, version: str) -> tuple[str, str] |
     '--indent-length', '-i', default=2, type=int, help='number of spaces to indent'
 )
 @click.option(
-    '--index-url', '-I', default="https://pypi.org/pypi", type=str, help='custom package index url. must support the \'/json\' endpoint.'
+    '--index-url', '-I', type=str, help='custom package index url. should either support the \'/json\' endpoint, or contain \'{package}-{version}.tar.gz\''
 )
 @click.option(
     '-v', '--verbose', is_flag=True, help='enable verbose logging'
 )
-def cli(indent_length: int, index_url: str, verbose: bool):
+def cli(indent_length: int, index_url: str | None, verbose: bool):
     if verbose:
         logger.setLevel(logging.DEBUG)
 
