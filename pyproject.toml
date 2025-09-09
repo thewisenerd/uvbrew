@@ -1,0 +1,20 @@
+[project]
+name = "uvbrew"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "thewisenerd", email = "thewisenerd@protonmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.2.1",
+    "structlog>=25.4.0",
+]
+
+[project.scripts]
+uvbrew = "uvbrew:main"
+
+[build-system]
+requires = ["uv_build>=0.8.15,<0.9.0"]
+build-backend = "uv_build"
