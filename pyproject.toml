@@ -19,5 +19,8 @@ Homepage = "https://github.com/thewisenerd/uvbrew"
 uvbrew = "uvbrew:main"
 
 [build-system]
-requires = ["uv_build>=0.8.15,<0.9.0"]
-build-backend = "uv_build"
+# for some reason, colorama doesn't work with uv_build
+# requires = ["uv_build>=0.8.15,<0.9.0"]
+# build-backend = "uv_build"
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
