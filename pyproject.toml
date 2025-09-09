@@ -1,6 +1,6 @@
 [project]
 name = "uvbrew"
-version = "0.1.3"
+version = "0.1.4"
 description = "create homebrew formulae from a uv package"
 readme = "README.md"
 authors = [
