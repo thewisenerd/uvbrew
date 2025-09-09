@@ -10,7 +10,7 @@ bump-version:
 	@test -z "$$(git status --porcelain)" || (echo "uncommitted changes found!" && exit 1)
 	uv version --bump patch
 	git add pyproject.toml uv.lock
-	git commit -m "$(uv version)"
+	git commit -m "v$$(uv version --short)"
 
 publish: clean
 	@test -z "$$(git status --porcelain)" || (echo "uncommitted changes found!" && exit 1)
