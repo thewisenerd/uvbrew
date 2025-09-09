@@ -54,7 +54,7 @@ def _packages(root: Path, skip_packages: set[str]) -> Generator[Package, None, N
     for package in packages:
         name = package['name']
         if name in skip_packages:
-            return
+            continue
 
         if not 'sdist' in package:
             logger.warning("sdist not found, skipping package", package=name)
